@@ -6,4 +6,8 @@ authors = ["Donald Whyte <donaldwhyte0@gmail.com>"]
 [dependencies]
 clap = "2.22.2"
 iron = "0.5.1"
+persistent = "0.3.0"
+r2d2 = "0.7.1"
+r2d2_redis = "0.6.0"
 redis = "0.8.0"
+router = "*"

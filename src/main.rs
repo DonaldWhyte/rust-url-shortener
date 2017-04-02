@@ -1,5 +1,14 @@
 #[macro_use]
 extern crate clap;
+extern crate r2d2;
+extern crate r2d2_redis;
+extern crate redis;
+
+mod service;
+
+static SERVICE_DEFAULT_ADDRESS : &str = "localhost";
+static REDIS_DEFAULT_HOST : &str = "localhost";
+static REDIS_DEFAULT_PORT : u16 = 6379;
 
 fn main() {
     let matches = clap_app!(myapp =>
@@ -12,9 +21,17 @@ fn main() {
         (@arg redis_port: --redis_port +takes_value "Port backing Redis store is listening on [default: 6379]")
     ).get_matches();
     let port = value_t!(matches.value_of("port"), u16).unwrap();
-    let address = matches.value_of("address").unwrap_or("localhost");
-    let redis_host = matches.value_of("redis_host").unwrap_or("localhost");
-    let redis_port = value_t!(matches.value_of("redis_port"), u16).unwrap_or(6379);
+    let address = matches.value_of("address").unwrap_or(SERVICE_DEFAULT_ADDRESS);
+    let redis_host = matches.value_of("redis_host").unwrap_or(REDIS_DEFAULT_HOST);
+    let redis_port = value_t!(matches.value_of("redis_port"), u16).unwrap_or(
+        REDIS_DEFAULT_PORT);
 
-    // TODO
+    let connection_str =
+        "redis://".to_string() + redis_host + ":" + &redis_port.to_string();
+    let manager = r2d2_redis::RedisConnectionManager::new(
+        connection_str.as_ref()).unwrap();
+    let config = Default::default();
+    let connection_pool = r2d2::Pool::new(config, manager).unwrap();
+
+    service::start_service(connection_pool, address, port);
 }
