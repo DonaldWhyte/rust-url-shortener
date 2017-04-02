@@ -4,5 +4,6 @@ version = "0.1.0"
 authors = ["Donald Whyte <donaldwhyte0@gmail.com>"]
 
 [dependencies]
+clap = "2.22.2"
 iron = "0.5.1"
 redis = "0.8.0"
