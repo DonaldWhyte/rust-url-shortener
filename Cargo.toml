@@ -1,0 +1,8 @@
+[package]
+name = "rust-url-shortener"
+version = "0.1.0"
+authors = ["Donald Whyte <donaldwhyte0@gmail.com>"]
+
+[dependencies]
+iron = "0.5.1"
+redis = "0.8.0"
