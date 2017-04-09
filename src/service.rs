@@ -10,6 +10,7 @@ use std::error::Error;
 use std::result::Result;
 use std::result::Result::{Ok, Err};
 use self::iron::IronResult;
+use self::iron::modifiers::Redirect;
 use self::iron::prelude::*;
 use self::iron::status::*;
 use self::iron::Url;
@@ -87,9 +88,7 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
                     },
                     Err(e) => {
                         // TODO: log error here
-                        Ok(Response::with((
-                            Status::InternalServerError,
-                            "internal service error")))
+                        constants::INTERNAL_SERVICE_ERROR
                     }
                 }
             } else {
@@ -99,14 +98,35 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
     }
 }
 
-/*fn resolve_handler(req: &mut Request) -> IronResult<Response> {
-    // TODO
-}*/
+fn resolve_handler(req: &mut Request) -> IronResult<Response> {
+    let token = req.url.path()[0];
+
+    let pool = req.get::<Read<Redis>>().unwrap().clone();
+    let ref connection = pool.get().unwrap();
+    let result: RedisResult<String> = connection.get(token);
+    match result {
+        Ok(resolved_url) => {
+            match Url::parse(&resolved_url) {
+                Ok(parsed_url) => {
+                    Ok(Response::with((
+                        Status::MovedPermanently, Redirect(parsed_url))))
+                },
+                Err(e) => {
+                    constants::INTERNAL_SERVICE_ERROR
+                }
+            }
+        },
+        Err(e) => {
+            // TODO: log error here
+            constants::INTERNAL_SERVICE_ERROR
+        }
+    }
+}
 
 pub fn start_service(connection_pool: RedisPool, address: &str, port: u16) {
     let mut router = router::Router::new();
     router.get("/shorten", shorten_handler, "shorten");
-    //router.get("/:token", resolve_handler, "resolver");
+    router.get("/:token", resolve_handler, "resolver");
 
     let mut chain = Chain::new(router);
     chain.link_before(Read::<Redis>::one(connection_pool));
