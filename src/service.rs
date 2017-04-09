@@ -1,4 +1,5 @@
 extern crate iron;
+extern crate logger;
 extern crate persistent;
 extern crate r2d2;
 extern crate r2d2_redis;
@@ -15,6 +16,7 @@ use self::iron::modifiers::Redirect;
 use self::iron::prelude::*;
 use self::iron::status::*;
 use self::iron::Url;
+use self::logger::Logger;
 use self::persistent::Read;
 use self::r2d2::Pool;
 use self::r2d2_redis::RedisConnectionManager;
@@ -67,6 +69,14 @@ fn create_shortened_url(connection: &redis::Connection, url: &str) -> Result<Str
     }
 }
 
+// TODO: comment on service section
+fn internal_service_error(error_message: &str) -> IronResult<Response> {
+    Ok(Response::with((
+        Status::InternalServerError,
+        format!("internal service error: {}", error_message)
+    )))
+}
+
 fn shorten_handler(req: &mut Request) -> IronResult<Response> {
     match req.url.clone().query() {
         None => {
@@ -89,8 +99,7 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
                         Ok(Response::with((Status::Created, shortened_url)))
                     },
                     Err(e) => {
-                        // TODO: log error here
-                        constants::internal_service_error()
+                        internal_service_error(&e)
                     }
                 }
             } else {
@@ -114,13 +123,12 @@ fn resolve_handler(req: &mut Request) -> IronResult<Response> {
                         Status::MovedPermanently, Redirect(parsed_url))))
                 },
                 Err(e) => {
-                    constants::internal_service_error()
+                    internal_service_error(&e)
                 }
             }
         },
         Err(e) => {
-            // TODO: log error here
-            constants::internal_service_error()
+            internal_service_error(e.description())
         }
     }
 }
@@ -129,9 +137,14 @@ pub fn start_service(connection_pool: RedisPool, address: &str, port: u16) {
     let mut router = router::Router::new();
     router.get("/shorten", shorten_handler, "shorten");
     router.get("/:token", resolve_handler, "resolver");
-
     let mut chain = Chain::new(router);
+
+    let (logger_before, logger_after) = Logger::new(None);
+    chain.link_before(logger_before);
+    chain.link_after(logger_after);
+
     chain.link_before(Read::<Redis>::one(connection_pool));
+
     let binding_str = address.to_string() + ":" + &port.to_string();
     Iron::new(chain).http(binding_str).unwrap();
 }
