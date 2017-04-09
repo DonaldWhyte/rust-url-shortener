@@ -5,6 +5,9 @@ use self::rustc_serialize::hex::ToHex;
 use self::sha2::{Digest, Sha256};
 use constants;
 
+// TODO: improve this -- very long URLs currently. Will likely need a counter,
+// which makes Redis pants for this.
+
 pub fn to_token(url: &str) -> String {
     let mut hash = Sha256::default();
     hash.input(url.as_bytes());
