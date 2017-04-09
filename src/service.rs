@@ -5,8 +5,6 @@ extern crate r2d2;
 extern crate r2d2_redis;
 extern crate redis;
 extern crate router;
-extern crate rustc_serialize;
-extern crate sha2;
 
 use std::error::Error;
 use std::result::Result;
@@ -16,28 +14,13 @@ use self::iron::modifiers::Redirect;
 use self::iron::prelude::*;
 use self::iron::status::*;
 use self::iron::Url;
+use self::logger::Format;
 use self::logger::Logger;
 use self::persistent::Read;
 use self::r2d2::Pool;
 use self::r2d2_redis::RedisConnectionManager;
 use self::redis::{Commands, RedisResult};
-use self::rustc_serialize::hex::ToHex;
-use self::sha2::{Digest, Sha256};
-use constants;
-
-// -----------------------------------------------------------------------------
-// * Shortened URL Construction
-// -----------------------------------------------------------------------------
-fn to_token(url: &str) -> String {
-    let mut hash = Sha256::default();
-    hash.input(url.as_bytes());
-    hash.result().as_slice().to_hex()
-}
-
-fn token_to_url(token: &str) -> String {
-    // TODO: make basename configurable
-    format!("http://{}/{}", constants::URL_BASENAME, token)
-}
+use token;
 
 // -----------------------------------------------------------------------------
 // * Redis
@@ -49,26 +32,26 @@ impl iron::typemap::Key for Redis {
 }
 
 fn shortern_url(connection: &redis::Connection, url: &str) -> Result<String, String> {
-    let token = to_token(url);
-    let result: RedisResult<()> = connection.sadd(&token, url);
+    let token = token::to_token(url);
+    let result: RedisResult<()> = connection.set(&token, url);
     match result {
-        Ok(_) => Ok(token_to_url(&token)),
+        Ok(_) => Ok(token::token_to_url(&token)),
         Err(e) => Err(e.description().to_owned())
     }
 }
 
-fn resolve_url(connection: &redis::Connection, url: &str) -> Result<Option<String>, String> {
-    let token = to_token(url);
-    let result: RedisResult<bool> = connection.sismember(&token, url);
+fn resolve_token(connection: &redis::Connection, token: &str) -> Result<Option<String>, String> {
+    let result: RedisResult<Option<String>> = connection.get(token);
     match result {
-        Ok(is_member) => {
-            if is_member {
-                Ok(Some(token_to_url(&token)))
-            } else {
+        Ok(url) => Ok(url),
+        Err(e) => {
+            let missing = false;
+            if missing {
                 Ok(None)
+            } else {
+                Err(e.description().to_owned())
             }
-        },
-        Err(e) => Err(e.description().to_owned())
+        }
     }
 }
 
@@ -90,9 +73,7 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
         Some(s) => {
             let (arg_name, arg_val) = s.split_at(4);
             if arg_name == "url=" {
-                // Validat
                 if let Err(_) = Url::parse(arg_val) {
-                    // TODO: log error
                     return Ok(Response::with((Status::BadRequest, "Malformed URL")));
                 }
 
@@ -101,7 +82,7 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
                 let ref connection = connection_pool.get().unwrap();
                 match shortern_url(&connection, arg_val) {
                     Ok(shortened_url) => {
-                        Ok(Response::with((Status::Created, shortened_url)))
+                        Ok(Response::with((Status::Ok, shortened_url)))
                     },
                     Err(e) => {
                         internal_service_error(&e)
@@ -118,7 +99,8 @@ fn resolve_handler(req: &mut Request) -> IronResult<Response> {
     let connection_pool = req.get::<Read<Redis>>().unwrap().clone();
     let ref connection = connection_pool.get().unwrap();
     let token = req.url.path()[0];
-    match resolve_url(&connection, token) {
+    info!("Resolving token {:?}", token);
+    match resolve_token(&connection, token) {
         Ok(resolved_url) => {
             match resolved_url {
                 Some(url) => {
@@ -149,12 +131,16 @@ pub fn start_service(connection_pool: RedisPool, address: &str, port: u16) {
     router.get("/:token", resolve_handler, "resolver");
     let mut chain = Chain::new(router);
 
-    let (logger_before, logger_after) = Logger::new(None);
+    let format = Format::new(
+        "Uri: {uri}, Method: {method}, Status: {status}, Duration: {response-time}, Time: {request-time}");
+    let (logger_before, logger_after) = Logger::new(Some(format.unwrap()));
     chain.link_before(logger_before);
     chain.link_after(logger_after);
 
+    info!("Creating Redis connection pool");
     chain.link_before(Read::<Redis>::one(connection_pool));
 
     let binding_str = address.to_string() + ":" + &port.to_string();
+    info!("Starting service and binding to {:?}", binding_str);
     Iron::new(chain).http(binding_str).unwrap();
 }
