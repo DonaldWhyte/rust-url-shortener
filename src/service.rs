@@ -4,6 +4,7 @@ extern crate r2d2;
 extern crate r2d2_redis;
 extern crate redis;
 extern crate router;
+extern crate rustc_serialize;
 extern crate sha2;
 
 use std::error::Error;
@@ -18,6 +19,7 @@ use self::persistent::Read;
 use self::r2d2::Pool;
 use self::r2d2_redis::RedisConnectionManager;
 use self::redis::{Commands, RedisResult};
+use self::rustc_serialize::hex::ToHex;
 use self::sha2::{Digest, Sha256};
 use constants;
 
@@ -42,7 +44,7 @@ fn resolve_or_shorten_url(connection: &redis::Connection, url: &str) -> Result<S
 }
 
 fn create_token(url: &str) -> String {
-    let mut hash = Sha256::new();
+    let mut hash = Sha256::default();
     hash.input(url.as_bytes());
     hash.result().as_slice().to_hex()
 }
@@ -80,15 +82,15 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
                 }
 
                 // Create token and return full shortened URL to client
-                let pool = req.get::<Read<Redis>>().unwrap().clone();
-                let ref connection = pool.get().unwrap();
+                let connection_pool = req.get::<Read<Redis>>().unwrap().clone();
+                let ref connection = connection_pool.get().unwrap();
                 match resolve_or_shorten_url(&connection, arg_val) {
                     Ok(shortened_url) => {
                         Ok(Response::with((Status::Created, shortened_url)))
                     },
                     Err(e) => {
                         // TODO: log error here
-                        constants::INTERNAL_SERVICE_ERROR
+                        constants::internal_service_error()
                     }
                 }
             } else {
@@ -99,10 +101,10 @@ fn shorten_handler(req: &mut Request) -> IronResult<Response> {
 }
 
 fn resolve_handler(req: &mut Request) -> IronResult<Response> {
+    let connection_pool = req.get::<Read<Redis>>().unwrap().clone();
     let token = req.url.path()[0];
 
-    let pool = req.get::<Read<Redis>>().unwrap().clone();
-    let ref connection = pool.get().unwrap();
+    let ref connection = connection_pool.get().unwrap();
     let result: RedisResult<String> = connection.get(token);
     match result {
         Ok(resolved_url) => {
@@ -112,13 +114,13 @@ fn resolve_handler(req: &mut Request) -> IronResult<Response> {
                         Status::MovedPermanently, Redirect(parsed_url))))
                 },
                 Err(e) => {
-                    constants::INTERNAL_SERVICE_ERROR
+                    constants::internal_service_error()
                 }
             }
         },
         Err(e) => {
             // TODO: log error here
-            constants::INTERNAL_SERVICE_ERROR
+            constants::internal_service_error()
         }
     }
 }
