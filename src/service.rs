@@ -2,9 +2,9 @@ extern crate iron;
 extern crate persistent;
 extern crate r2d2;
 extern crate r2d2_redis;
-extern crate rand;
 extern crate redis;
 extern crate router;
+extern crate sha2;
 
 use std::error::Error;
 use std::result::Result;
@@ -14,11 +14,12 @@ use self::iron::prelude::*;
 use self::iron::status::*;
 use self::iron::Url;
 use self::persistent::Read;
-use self::rand::{thread_rng, Rng};
 use self::r2d2::Pool;
 use self::r2d2_redis::RedisConnectionManager;
 use self::redis::{Commands, RedisResult};
+use self::sha2::{Digest, Sha256};
 use constants;
+
 
 type RedisPool = Pool<RedisConnectionManager>;
 struct Redis;
@@ -39,11 +40,14 @@ fn resolve_or_shorten_url(connection: &redis::Connection, url: &str) -> Result<S
     }
 }
 
+fn create_token(url: &str) -> String {
+    let mut hash = Sha256::new();
+    hash.input(url.as_bytes());
+    hash.result().as_slice().to_hex()
+}
+
 fn create_shortened_url(connection: &redis::Connection, url: &str) -> Result<String, String> {
-    let token: String = thread_rng()
-        .gen_ascii_chars()
-        .take(constants::TOKEN_LENGTH)
-        .collect();
+    let token = create_token(url);
 
     // Need to assign RedisResults to variables first, since the compiler can't
     // deduce
